@@ -1,8 +1,6 @@
 import tkinter as tk
 import numpy as np
 from math import cos, sin, radians
-from affine_transforms import AffineTransforms
-from geometry_utils import GeometryUtils
 
 
 class PolygonEditor:
@@ -127,14 +125,24 @@ class PolygonEditor:
 
     def translate(self):
         """Смещение полигона на dx, dy"""
+        print(self.selected_polygon)
         if self.selected_polygon:
             dx = float(self.dx_entry.get() or 0)
             dy = float(self.dy_entry.get() or 0)
             translation_point = self.get_input_point() or (0, 0)
 
-            self.selected_polygon = AffineTransforms.translate(
-                self.selected_polygon, dx, dy, translation_point
-            )
+            translation_matrix = np.array([[1, 0, dx], [0, 1, dy], [0, 0, 1]])
+
+            for i, (x, y) in enumerate(self.selected_polygon):
+                point = np.array(
+                    [x - translation_point[0], y - translation_point[1], 1]
+                )
+                new_point = translation_matrix @ point
+                self.selected_polygon[i] = (
+                    new_point[0] + translation_point[0],
+                    new_point[1] + translation_point[1],
+                )
+
             self.redraw()
 
     def rotate(self):
@@ -145,9 +153,20 @@ class PolygonEditor:
                 self.selected_polygon
             )
 
-            self.selected_polygon = AffineTransforms.rotate(
-                self.selected_polygon, angle, rotation_point
+            rotation_matrix = np.array(
+                [[cos(angle), -sin(angle), 0], [sin(angle), cos(angle), 0], [0, 0, 1]]
             )
+
+            for i, (x, y) in enumerate(self.selected_polygon):
+                translated_point = np.array(
+                    [x - rotation_point[0], y - rotation_point[1], 1]
+                )
+                rotated_point = rotation_matrix @ translated_point
+                self.selected_polygon[i] = (
+                    rotated_point[0] + rotation_point[0],
+                    rotated_point[1] + rotation_point[1],
+                )
+
             self.redraw()
 
     def scale(self):
@@ -158,14 +177,27 @@ class PolygonEditor:
                 self.selected_polygon
             )
 
-            self.selected_polygon = AffineTransforms.scale(
-                self.selected_polygon, scale_factor, scaling_point
+            scaling_matrix = np.array(
+                [[scale_factor, 0, 0], [0, scale_factor, 0], [0, 0, 1]]
             )
+
+            for i, (x, y) in enumerate(self.selected_polygon):
+                translated_point = np.array(
+                    [x - scaling_point[0], y - scaling_point[1], 1]
+                )
+                scaled_point = scaling_matrix @ translated_point
+                self.selected_polygon[i] = (
+                    scaled_point[0] + scaling_point[0],
+                    scaled_point[1] + scaling_point[1],
+                )
+
             self.redraw()
 
     def get_polygon_center(self, polygon):
         """Нахождение центра полигона"""
-        return GeometryUtils.get_polygon_center(polygon)
+        x_coords = [x for x, y in polygon]
+        y_coords = [y for x, y in polygon]
+        return sum(x_coords) / len(x_coords), sum(y_coords) / len(y_coords)
 
     def redraw(self):
         """Перерисовка всех полигонов"""
@@ -180,7 +212,7 @@ class PolygonEditor:
         self.message_window.delete(1.0, tk.END)  # Очистка предыдущих сообщений
 
         for polygon in self.polygons:
-            if GeometryUtils.is_point_inside_polygon((x, y), polygon):
+            if self.is_point_inside_polygon((x, y), polygon):
                 self.message_window.insert(tk.END, "Точка внутри полигона\n")
             else:
                 self.message_window.insert(tk.END, "Точка снаружи полигона\n")
@@ -188,17 +220,43 @@ class PolygonEditor:
             if len(polygon) >= 2:
                 self.classify_point_position((x, y), polygon)
 
+    def is_point_inside_polygon(self, point, polygon):
+        """Проверка принадлежности точки полигону"""
+        x, y = point
+        n = len(polygon)
+        inside = False
+        px, py = polygon[0]
+        for i in range(n + 1):
+            cx, cy = polygon[i % n]
+            if y > min(py, cy):
+                if y <= max(py, cy):
+                    if x <= max(px, cx):
+                        if py != cy:
+                            xinters = (y - py) * (cx - px) / (cy - py) + px
+                        if px == cx or x <= xinters:
+                            inside = not inside
+            px, py = cx, cy
+        return inside
+
     def classify_point_position(self, point, polygon):
         """Классификация положения точки относительно прямых полигона"""
         px, py = point
         for i in range(len(polygon) - 1):
             x1, y1 = polygon[i]
             x2, y2 = polygon[i + 1]
-            position = GeometryUtils.get_point_position_relative_to_line(
-                px, py, x1, y1, x2, y2
-            )
+            position = self.get_point_position_relative_to_line(px, py, x1, y1, x2, y2)
             line_description = f"Точка ({px}, {py}) относительно прямой ({x1}, {y1}) - ({x2}, {y2}): {position}\n"
             self.message_window.insert(tk.END, line_description)
+
+    def get_point_position_relative_to_line(self, px, py, x1, y1, x2, y2):
+        """Определение положения точки относительно прямой"""
+        determinant = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+        if determinant < 0:
+            return "Слева"
+        elif determinant > 0:
+            return "Справа"
+        else:
+            return "На линии"
 
     def check_polygon_intersections(self):
         """Проверка пересечений рёбер полигона"""
@@ -227,7 +285,7 @@ class PolygonEditor:
                 x3, y3 = polygon[j % n]
                 x4, y4 = polygon[(j + 1) % n]
 
-                intersection_point = GeometryUtils.get_intersection_point(
+                intersection_point = self.get_intersection_point(
                     (x1, y1), (x2, y2), (x3, y3), (x4, y4)
                 )
 
@@ -238,3 +296,31 @@ class PolygonEditor:
                         ix - 5, iy - 5, ix + 5, iy + 5, fill="green"
                     )
                     self.message_window.insert(tk.END, intersection)
+
+    def get_intersection_point(self, p1, p2, p3, p4):
+        """Нахождение точки пересечения двух отрезков p1p2 и p3p4, если она существует"""
+        x1, y1 = p1
+        x2, y2 = p2
+        x3, y3 = p3
+        x4, y4 = p4
+
+        denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if denominator == 0:
+            return None  # Отрезки параллельны
+
+        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denominator
+        u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denominator
+
+        # Проверяем, лежат ли параметры t и u в диапазоне от 0 до 1 (отрезки пересекаются в пределах их длины)
+        if 0 <= t <= 1 and 0 <= u <= 1:
+            # Вычисляем точку пересечения
+            ix = x1 + t * (x2 - x1)
+            iy = y1 + t * (y2 - y1)
+            return ix, iy
+
+        return None
+
+
+root = tk.Tk()
+app = PolygonEditor(root)
+root.mainloop()
